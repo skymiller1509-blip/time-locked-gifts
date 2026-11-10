@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Time-Locked Gifts - a gift that waits for its day</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #10131a; color: #eef1f6; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 28px; margin: 8px 0 4px; }
+  .sub { color: #aab4c4; margin: 0 0 8px; }
+  .badge { display: inline-block; background: #3a2b12; color: #ffcf6e; border: 1px solid #8a6a25;
+           padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  section { background: #171b25; border: 1px solid #262d3d; border-radius: 12px; padding: 16px; margin-top: 20px; }
+  label { display: block; font-size: 13px; color: #aab4c4; margin: 12px 0 4px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px;
+    border: 1px solid #333d52; background: #0d1017; color: #eef1f6; font-size: 15px; }
+  button { background: #4f7cff; color: white; border: 0; border-radius: 8px; padding: 10px 16px;
+    font-size: 15px; cursor: pointer; margin-top: 14px; }
+  button.secondary { background: #2a3247; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .gift { border: 1px solid #333d52; border-radius: 10px; padding: 14px; margin-top: 12px; background: #10141f; }
+  .pot { font-size: 22px; font-weight: 700; }
+  .locked { color: #ffcf6e; } .opened { color: #7be495; }
+  .count { font-variant-numeric: tabular-nums; color: #aab4c4; }
+  .msg { background: #0d1017; border: 1px dashed #333d52; border-radius: 8px; padding: 10px; margin-top: 10px; }
+  .note { font-size: 13px; color: #aab4c4; }
+  .refused { color: #ff9d8a; font-weight: 600; margin-top: 8px; }
+  a { color: #8fb0ff; }
+</style>
+</head>
+<body>
+<main>
+  <span class="badge">NEAR TESTNET DEMO - play money, real contract</span>
+  <h1>🎁 Time-Locked Gifts</h1>
+  <p class="sub">Buy a gift that cannot be opened until its day comes - a wedding, a graduation,
+  a 25th birthday. The gift is an NFT. Inside it: real (testnet) NEAR and a message,
+  locked by the contract itself. Family and friends can top the pot up while it waits.</p>
+  <p class="note" id="configLine">Loading contract…</p>
+
+  <section>
+    <h2>Make a gift</h2>
+    <label>Occasion</label>
+    <select id="occasion">
+      <option value="demo">Demo - opens in 2 minutes</option>
+      <option value="wedding">Wedding day</option>
+      <option value="graduation">Graduation day</option>
+      <option value="birthday25">When they turn 25</option>
+      <option value="custom">Pick a date</option>
+    </select>
+    <label>Opening day and time (the occasion above fills this in - you can change it)</label>
+    <input type="datetime-local" id="unlockAt">
+    <label>Recipient (NEAR testnet account - the demo recipient is filled in)</label>
+    <input id="recipient" type="text">
+    <label>Amount (testnet NEAR)</label>
+    <input id="amount" type="text" value="0.1">
+    <label>Message (sealed in the app until opening day)</label>
+    <textarea id="message" rows="2">For your big day - we love you!</textarea>
+    <label>Video message link</label>
+    <input id="video" type="text" value="https://example.org/video-message">
+    <button id="createBtn">Lock this gift 🎁</button>
+    <p class="note" id="createOut"></p>
+  </section>
+
+  <section>
+    <h2>The gift box</h2>
+    <p class="note">Gifts owned by the demo recipient. Try opening one early - the contract will refuse.</p>
+    <div id="gifts"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let cfg = null;
+
+function setDefaultUnlock() {
+  const sel = $('occasion').value;
+  const now = new Date();
+  let d;
+  if (sel === 'demo') d = new Date(now.getTime() + 2 * 60 * 1000);
+  else if (sel === 'wedding') { d = new Date(now); d.setMonth(d.getMonth() + 6); }
+  else if (sel === 'graduation') { d = new Date(now); d.setFullYear(d.getFullYear() + 1); }
+  else if (sel === 'birthday25') { d = new Date(now); d.setFullYear(d.getFullYear() + 5); }
+  else d = new Date(now.getTime() + 24 * 3600 * 1000);
+  $('unlockAt').value = d.toISOString().slice(0, 16);
+}
+
+async function loadConfig() {
+  cfg = await (await fetch('/api/config')).json();
+  $('recipient').value = cfg.demo_recipient;
+  $('configLine').innerHTML =
+    `Contract: <a href="${cfg.explorer}/address/${cfg.contract}" target="_blank">${cfg.contract}</a> · ` +
+    `Demo giver: ${cfg.giver} · Demo recipient: ${cfg.demo_recipient}`;
+}
+
+function countdown(g) {
+  const ms = new Date(g.unlock_iso).getTime() - Date.now();
+  if (g.opened) return 'opened';
+  if (ms <= 0) return 'its day has come - it can be opened now';
+  const s = Math.floor(ms / 1000);
+  const parts = [];
+  const days = Math.floor(s / 86400); if (days) parts.push(days + 'd');
+  const hrs = Math.floor((s % 86400) / 3600); if (hrs || days) parts.push(hrs + 'h');
+  const min = Math.floor((s % 3600) / 60); if (min || hrs || days) parts.push(min + 'm');
+  parts.push((s % 60) + 's');
+  return 'opens in ' + parts.join(' ');
+}
+
+const giftById = {};
+async function loadGifts() {
+  const data = await (await fetch('/api/gifts')).json();
+  for (const g of data.gifts) giftById[g.token_id] = g;
+  const box = $('gifts');
+  box.innerHTML = '';
+  if (!data.gifts.length) { box.innerHTML = '<p class="note">No gifts yet.</p>'; return; }
+  for (const g of data.gifts.slice().reverse()) {
+    const div = document.createElement('div');
+    div.className = 'gift';
+    div.innerHTML = `
+      <div class="pot">${g.pot_near} NEAR <span class="${g.opened ? 'opened' : 'locked'}">${g.opened ? '· OPENED' : '· locked'}</span></div>
+      <div class="count" data-count="${g.token_id}">${countdown(g)}</div>
+      <div class="note">Gift ${g.token_id} · from ${g.giver} · unlock day: ${new Date(g.unlock_iso).toLocaleString()}</div>
+      ${g.opened
+        ? `<div class="msg">💌 ${g.message || ''}<br><a href="${g.video_url}" target="_blank">${g.video_url}</a></div>`
+        : `<div class="msg">🔒 The message is sealed until opening day.</div>
+           <button data-topup="${g.token_id}" class="secondary">Top up +0.05 NEAR</button>
+           <button data-open="${g.token_id}">Try to open it</button>
+           <div class="refused" data-result="${g.token_id}"></div>`}`;
+    box.appendChild(div);
+  }
+  box.querySelectorAll('[data-topup]').forEach((b) => b.addEventListener('click', () => act(b, `/api/gifts/${b.dataset.topup}/top-up`, { amount_near: '0.05' })));
+  box.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openGift(b)));
+}
+
+async function act(btn, url, body) {
+  btn.disabled = true;
+  try { await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+  finally { btn.disabled = false; loadGifts(); }
+}
+
+async function openGift(btn) {
+  const id = btn.dataset.open;
+  btn.disabled = true;
+  const res = await (await fetch(`/api/gifts/${id}/open`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
+  btn.disabled = false;
+  if (res.refused) {
+    document.querySelector(`[data-result="${id}"]`).textContent = res.reason;
+  } else {
+    loadGifts();
+  }
+}
+
+$('occasion').addEventListener('change', setDefaultUnlock);
+$('createBtn').addEventListener('click', async () => {
+  const btn = $('createBtn'); btn.disabled = true;
+  $('createOut').textContent = 'Locking the gift on testnet…';
+  const res = await (await fetch('/api/gifts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: $('recipient').value.trim(),
+      amount_near: $('amount').value.trim(),
+      unlock_iso: new Date($('unlockAt').value).toISOString(),
+      message: $('message').value, video_url: $('video').value.trim(),
+    }),
+  })).json();
+  btn.disabled = false;
+  $('createOut').innerHTML = res.gift
+    ? `Locked! Gift ${res.gift.token_id} holds ${res.gift.pot_near} NEAR. <a href="${cfg.explorer}/txns/${res.tx}" target="_blank">See the transaction</a>`
+    : 'Something went wrong: ' + (res.error || 'unknown error');
+  loadGifts();
+});
+
+setDefaultUnlock();
+loadConfig().then(loadGifts);
+setInterval(() => {
+  document.querySelectorAll('[data-count]').forEach((el) => {
+    const g = giftById[el.dataset.count];
+    if (g) el.textContent = countdown(g);
+  });
+}, 1000);
+setInterval(loadGifts, 15000);
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "time-locked-gifts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Time-Locked Gifts: a gift NFT that holds real NEAR in a locked pot until a date you choose - then the owner opens it and gets the money and the message.",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node app/server.js"
+  }
+}

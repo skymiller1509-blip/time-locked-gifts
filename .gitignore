@@ -1,0 +1,5 @@
+node_modules/
+keys/
+contract/build/builder.c
+contract/build/code.h
+contract/build/methods.h
